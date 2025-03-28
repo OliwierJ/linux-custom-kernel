@@ -1,3 +1,6 @@
+/*
+  keyboard map for when shift is pressed
+*/
 unsigned char keyboard_map_shift[128] = {
     0,  27, '!', '@', '#', '$', '%', '^', '&', '*',   // 9
   '(', ')', '_', '+', '\b',  // Backspace

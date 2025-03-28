@@ -3,6 +3,7 @@
  */
 
 #include "keyboard_map.h"
+#include "keyboard_map_shift.h"
 
 /* there are 25 lines each of 80 columns; each element takes 2 bytes */
 #define LINES 25
@@ -30,9 +31,13 @@ unsigned int current_loc = 0;
 /* video memory begins at address 0xb8000 */
 char *vidptr = (char*)0xb8000;
 
+// array and pointer for line feeds
+int lf_stack[LINES];
+int* lf_ptr = lf_stack;
+
+// bits for shift and caps
 int shift_pressed = 0; 
 int caps_locked = 0;
-int pos_last_cr;
 
 struct IDT_entry {
 	unsigned short int offset_lowerbits;
@@ -105,26 +110,40 @@ void kb_init(void)
 
 }
 
+// function to update the hardware cursor
+void updateCaret(int position) {
+	write_port(0x3d4, 0x0f);					// Select low byte of cursor position
+	write_port(0x3d5, position & 0xff);			// Send low byte 
+	write_port(0x3d4, 0x0e);					// Select high byte of cursor position
+	write_port(0x3d5, (position >> 8) & 0xFF);	// Send high byte
+
+}
+
 // carriage return
 void kprint_newline(void)
 {
-	pos_last_cr = current_loc;
+	// push the current loc onto lf stack
+	*lf_ptr++ = current_loc;
 	unsigned int line_size = BYTES_FOR_EACH_ELEMENT * COLUMNS_IN_LINE;
 	current_loc = current_loc + (line_size - current_loc % (line_size));
-}
+	updateCaret(current_loc/2);
+}	
 
 // backspace function
 void kprint_backspace(void) {
-	if (!current_loc) {return;}
+	if (!current_loc) {return;} //return early if the location is 0
 	
 	unsigned int line_size = BYTES_FOR_EACH_ELEMENT * COLUMNS_IN_LINE;
 	if (current_loc % line_size == 0) {
-		current_loc = pos_last_cr;
+		// pop the current loc off the stack
+		current_loc = *--lf_ptr;
+		updateCaret(current_loc/2);
 		return;
 	}
 	current_loc -= 2;
 	vidptr[current_loc] = ' ';
 
+	updateCaret(current_loc/2);
 }
 
 // prints a string at a location on screen 
@@ -140,7 +159,9 @@ void kprint(const char *str, unsigned int loc)
 		vidptr[current_loc++] = 0x03;
 	}
 	current_loc = temp_loc;
+	updateCaret(current_loc/2);
 }
+
 
 // check is a char is a letter
 int isAlpha(unsigned letter) {
@@ -191,19 +212,29 @@ void keyboard_handler_main(void) {
 			return;
 		}
 
-		key_pressed = keyboard_map[keycode];
+		// if shift is pressed then use the shifted key map
+		if (shift_pressed) {
+			key_pressed = keyboard_map_shift[keycode];
+		} // else use the regular one 
+		else { 
+			key_pressed = keyboard_map[keycode];
 
-		if (shift_pressed && isAlpha(key_pressed)) {
-			key_pressed -= 32;
-		} 
-
-		if (caps_locked && isAlpha(key_pressed)) {
-			key_pressed -= 32;
 		}
 
+		// if caps lock is on and shift is NOT pressed
+		if (caps_locked && !shift_pressed && isAlpha(key_pressed)) {
+			key_pressed -= 32;
+		}
+		// if caps lock is on and shift is pressed
+		if (caps_locked && shift_pressed && isAlpha(key_pressed)) {
+			key_pressed += 32;
+		}
+
+		// set the current location to the character and set the formatting
 		vidptr[current_loc++] = key_pressed;
 		vidptr[current_loc++] = 0x03;
 
+		updateCaret(current_loc/2);
 	}
 }
 
